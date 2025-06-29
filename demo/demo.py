@@ -1,11 +1,7 @@
 import argparse
 import os
 import os.path as osp
-
 import cv2
-import decord
-decord.bridge.set_bridge('native')
-
 import numpy as np
 import torch
 import webcolors
@@ -15,6 +11,7 @@ from mmengine.config import DictAction
 from mmaction.apis import inference_recognizer, init_recognizer
 import random
 
+# For reproducibility
 os.environ['PYTHONHASHSEED'] = '0'
 random.seed(0)
 np.random.seed(0)
@@ -34,8 +31,7 @@ def parse_args():
         action=DictAction,
         default={},
         help='override some settings in the used config, the key-value pair '
-        'in xxx=yyy format will be merged into config file. For example, '
-        "'--cfg-options model.backbone.depth=18 model.backbone.with_cp=True'")
+             'in xxx=yyy format will be merged into config file.')
     parser.add_argument(
         '--use-frames',
         default=False,
@@ -47,32 +43,28 @@ def parse_args():
         '--fps',
         default=30,
         type=int,
-        help='specify fps value of the output video when using rawframes to '
-        'generate file')
+        help='fps value for output video')
     parser.add_argument(
         '--font-scale',
         default=0.5,
         type=float,
-        help='font scale of the label in output video')
+        help='font scale for label text')
     parser.add_argument(
         '--font-color',
         default='white',
-        help='font color of the label in output video')
+        help='font color for label text')
     parser.add_argument(
         '--target-resolution',
         nargs=2,
         default=None,
         type=int,
-        help='Target resolution (w, h) for resizing the frames when using a '
-        'video as input. If either dimension is set to -1, the frames are '
-        'resized by keeping the existing aspect ratio')
+        help='Target resolution (w h). Use -1 to keep aspect ratio.')
     parser.add_argument(
         '--resize-algorithm',
         default='bicubic',
-        help='resize algorithm applied to generate video')
+        help='resize algorithm for output')
     parser.add_argument('--out-filename', default=None, help='output filename')
-    args = parser.parse_args()
-    return args
+    return parser.parse_args()
 
 
 def get_output(video_path,
@@ -84,48 +76,34 @@ def get_output(video_path,
                target_resolution=None,
                resize_algorithm='bicubic',
                use_frames=False):
-    """Get demo output using ``moviepy``.
-
-    This function will generate video file or gif file from raw video or
-    frames, by using ``moviepy``. For more information of some parameters,
-    you can refer to: https://github.com/Zulko/moviepy.
-
-    Args:
-        video_path (str): The video file path or the rawframes directory path.
-            If ``use_frames`` is set to True, it should be rawframes directory
-            path. Otherwise, it should be video file path.
-        out_filename (str): Output filename for the generated file.
-        label (str): Predicted label of the generated file.
-        fps (int): Number of picture frames to read per second. Default: 30.
-        font_scale (float): Font scale of the label. Default: 0.5.
-        font_color (str): Font color of the label. Default: 'white'.
-        target_resolution (None | tuple[int | None]): Set to
-            (desired_width desired_height) to have resized frames. If either
-            dimension is None, the frames are resized by keeping the existing
-            aspect ratio. Default: None.
-        resize_algorithm (str): Support "bicubic", "bilinear", "neighbor",
-            "lanczos", etc. Default: 'bicubic'. For more information,
-            see https://ffmpeg.org/ffmpeg-scaler.html
-        use_frames: Determine Whether to use rawframes as input. Default:False.
-    """
+    """Generate output video with overlayed label text."""
 
     if video_path.startswith(('http://', 'https://')):
-        raise NotImplementedError
+        raise NotImplementedError('URL input not supported.')
 
     try:
         from moviepy.editor import ImageSequenceClip
     except ImportError:
-        raise ImportError('Please install moviepy to enable output file.')
+        raise ImportError('Please install moviepy to enable output generation.')
 
-    # Channel Order is BGR
+    # Read frames
     if use_frames:
-        frame_list = sorted(
-            [osp.join(video_path, x) for x in os.listdir(video_path)])
+        frame_list = sorted([osp.join(video_path, x) for x in os.listdir(video_path)])
         frames = [cv2.imread(x) for x in frame_list]
     else:
-        video = decord.VideoReader(video_path)
-        frames = [x.asnumpy()[..., ::-1] for x in video]
+        frames = []
+        cap = cv2.VideoCapture(video_path)
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            frames.append(frame)
+        cap.release()
 
+    if not frames:
+        raise RuntimeError(f"No frames read from {video_path}")
+
+    # Resize
     if target_resolution:
         w, h = target_resolution
         frame_h, frame_w, _ = frames[0].shape
@@ -135,8 +113,8 @@ def get_output(video_path,
             h = int(w / frame_w * frame_h)
         frames = [cv2.resize(f, (w, h)) for f in frames]
 
-    textsize = cv2.getTextSize(label, cv2.FONT_HERSHEY_DUPLEX, font_scale,
-                               1)[0]
+    # Add label text
+    textsize = cv2.getTextSize(label, cv2.FONT_HERSHEY_DUPLEX, font_scale, 1)[0]
     textheight = textsize[1]
     padding = 10
     location = (padding, padding + textheight)
@@ -144,40 +122,36 @@ def get_output(video_path,
     if isinstance(font_color, str):
         font_color = webcolors.name_to_rgb(font_color)[::-1]
 
-    frames = [np.array(frame) for frame in frames]
     for frame in frames:
         cv2.putText(frame, label, location, cv2.FONT_HERSHEY_DUPLEX,
                     font_scale, font_color, 1)
 
-    # RGB order
-    frames = [x[..., ::-1] for x in frames]
-    video_clips = ImageSequenceClip(frames, fps=fps)
+    # Convert to RGB for MoviePy
+    frames = [f[..., ::-1] for f in frames]
+    video_clip = ImageSequenceClip(frames, fps=fps)
 
-    out_type = osp.splitext(out_filename)[1][1:]
-    if out_type == 'gif':
-        video_clips.write_gif(out_filename)
+    # Write out
+    ext = osp.splitext(out_filename)[1][1:]
+    if ext == 'gif':
+        video_clip.write_gif(out_filename)
     else:
-        video_clips.write_videofile(out_filename, remove_temp=True)
+        video_clip.write_videofile(out_filename, remove_temp=True)
 
 
 def main():
     args = parse_args()
-    # assign the desired device.
     device = torch.device(args.device)
 
     cfg = Config.fromfile(args.config)
     cfg.merge_from_dict(args.cfg_options)
 
-    # build the recognizer from a config file and checkpoint file/url
     model = init_recognizer(
         cfg, args.checkpoint, device=device, use_frames=args.use_frames)
 
-    # e.g. use ('backbone', ) to return backbone feature
     output_layer_names = None
 
-    # test a single video or rawframes of a single video
     if output_layer_names:
-        results, returned_feature = inference_recognizer(
+        results, _ = inference_recognizer(
             model,
             args.video,
             args.label,
@@ -185,22 +159,23 @@ def main():
             outputs=output_layer_names)
     else:
         results = inference_recognizer(
-            model, args.video, args.label, use_frames=args.use_frames)
+            model,
+            args.video,
+            args.label,
+            use_frames=args.use_frames)
 
-    print('The top-5 labels with corresponding scores are:')
+    print('Top-5 labels with scores:')
     for result in results:
-        print(f'{result[0]}: ', result[1])
+        print(f'{result[0]}: {result[1]}')
 
     if args.out_filename is not None:
-
         if args.target_resolution is not None:
-            if args.target_resolution[0] == -1:
-                assert isinstance(args.target_resolution[1], int)
-                assert args.target_resolution[1] > 0
-            if args.target_resolution[1] == -1:
-                assert isinstance(args.target_resolution[0], int)
-                assert args.target_resolution[0] > 0
-            args.target_resolution = tuple(args.target_resolution)
+            w, h = args.target_resolution
+            if w == -1:
+                assert h > 0
+            if h == -1:
+                assert w > 0
+            args.target_resolution = (w, h)
 
         get_output(
             args.video,
