@@ -4,6 +4,8 @@ import os.path as osp
 
 import cv2
 import decord
+decord.bridge.set_bridge('native')
+
 import numpy as np
 import torch
 import webcolors
@@ -11,6 +13,13 @@ from mmengine.config import Config
 from mmengine.config import DictAction
 
 from mmaction.apis import inference_recognizer, init_recognizer
+import random
+
+os.environ['PYTHONHASHSEED'] = '0'
+random.seed(0)
+np.random.seed(0)
+torch.manual_seed(0)
+torch.use_deterministic_algorithms(True)
 
 
 def parse_args():
