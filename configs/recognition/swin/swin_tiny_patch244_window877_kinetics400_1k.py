@@ -120,3 +120,10 @@ optimizer_config = dict(
     bucket_size_mb=-1,
     use_fp16=True,
 )
+
+model['data_preprocessor'] = dict(
+    type='ActionDataPreprocessor',
+    mean=[123.675, 116.28, 103.53],
+    std=[58.395, 57.12, 57.375],
+    format_shape='NCTHW'
+)
