@@ -20,11 +20,6 @@ def parse_args():
     parser.add_argument('checkpoint', help='checkpoint file/url')
     parser.add_argument('video', help='video file/url or rawframes directory')
     parser.add_argument(
-        '--use-frames',
-        default=False,
-        action='store_true',
-        help='whether to use rawframes as input')
-    parser.add_argument(
         '--device', type=str, default='cuda:0', help='CPU/CUDA device option')
     parser.add_argument(
         '--target-layer-name',
@@ -174,9 +169,9 @@ def main():
 
     # build the recognizer from a config file and checkpoint file/url
     model = init_recognizer(
-        cfg, args.checkpoint, device=device, use_frames=args.use_frames)
+        cfg, args.checkpoint, device=device)
 
-    inputs = build_inputs(model, args.video, use_frames=args.use_frames)
+    inputs = build_inputs(model, args.video)
     gradcam = GradCAM(model, args.target_layer_name)
     results = gradcam(inputs)
 
