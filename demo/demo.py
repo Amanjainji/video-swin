@@ -33,11 +33,6 @@ def parse_args():
         help='override some settings in the used config, the key-value pair '
              'in xxx=yyy format will be merged into config file.')
     parser.add_argument(
-        '--use-frames',
-        default=False,
-        action='store_true',
-        help='whether to use rawframes as input')
-    parser.add_argument(
         '--device', type=str, default='cuda:0', help='CPU/CUDA device option')
     parser.add_argument(
         '--fps',
@@ -146,7 +141,7 @@ def main():
     cfg.merge_from_dict(args.cfg_options)
 
     model = init_recognizer(
-        cfg, args.checkpoint, device=device, use_frames=args.use_frames)
+        cfg, args.checkpoint, device=device)
 
     output_layer_names = None
 
@@ -155,14 +150,14 @@ def main():
             model,
             args.video,
             args.label,
-            use_frames=args.use_frames,
-            outputs=output_layer_names)
+            outputs=output_layer_names
+        )
     else:
         results = inference_recognizer(
             model,
             args.video,
             args.label,
-            use_frames=args.use_frames)
+        )
 
     print('Top-5 labels with scores:')
     for result in results:
@@ -186,7 +181,7 @@ def main():
             font_color=args.font_color,
             target_resolution=args.target_resolution,
             resize_algorithm=args.resize_algorithm,
-            use_frames=args.use_frames)
+        )
 
 
 if __name__ == '__main__':
